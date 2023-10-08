@@ -58,7 +58,7 @@ It's essential to follow best practices for managing AWS credentials and ensure 
 
 ## Project Author
 
-- Author: [Your Name]
+- Author: Thinh Pham
 
 ## License
 
