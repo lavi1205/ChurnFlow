@@ -1,1 +1,103 @@
+from airflow import DAG
+from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.operators.bash import BashOperator
+from airflow.operators.dummy_operator import DummyOperator
+from datetime import datetime
+from datetime import timedelta
+from botocore.exceptions import ClientError
+import time
+import boto3
+
+# Define default arguments for the DAG
+default_args = {
+    'owner': 'Thinh Pham',
+    'start_date': datetime(2023, 10, 7),  # Change to your desired start date
+    'retries': 5,  # Number of retries upon failure
+    'retry_delay': timedelta(minutes=5),  # Delay between retries
+}
+
+client = boto3.client('glue',aws_access_key_id=,
+aws_secret_access_key="", region_name = "ap-southeast-1")
+
+def trigger_glue_job(**kwargs):
+    job_name = kwargs['dag_run'].conf.get('job_name')
+    try:
+        response = client.start_job_run(
+            JobName=job_name
+        )
+        # Handle a successful API call here if needed
+    except ClientError as e:
+        # Handle the exception, for example, by logging the error or accessing error details
+        print(f"Error starting Glue job: {e}")
+
+def grab_glue_job_id(**kwargs):
+    time.sleep(180)
+    job_name = kwargs['dag_run'].conf.get('job_name')
+    try:
+        response = client.get_job_runs(
+        JobName=job_name,
+        MaxResults=123
+        )
+        glue_job_id = response.get('JobRuns')[0].get('Id')
+        print(f'AWS GLUE JOB {job_name} RETURN WITH JOG ID: {glue_job_id}')
+        return glue_job_id
+    except ClientError as e:
+        print(f'ERROR GRAB GLUE JOB ID{e}')
+
+def check_status_glue_job(**kwargs):
+    start_time = time.time()
+    job_name = kwargs['dag_run'].conf.get('job_name')
+    while True:
+        try:
+            response = client.get_job_runs(JobName=job_name, MaxResults=123)
+            job_run_state = response.get('JobRuns')[0].get('JobRunState')
+
+            if job_run_state == 'SUCCEEDED':
+                print(f'GLUE JOB {job_name} RUN SUCCEEDED WITH STATUS {job_run_state}')
+                break  # Exit the loop when the job succeeds
+            else:
+                print(f'GLUE JOB {job_name} RUN FAILED WITH STATUS {job_run_state}')
+        except ClientError as e:
+            print(f'Error checking Glue job status: {e}')
+            break  # Exit the loop on error
+        
+
+            
+
+# Instantiate the DAG using 'with dag as'
+with DAG(
+    'customer_churn_etl',  # Unique identifier for the DAG
+    default_args=default_args,
+    description='ETL for customer_churn data',
+    schedule_interval='@daily',  # Define the schedule interval (e.g., '@daily', '@hourly')
+    catchup=False,  # Set to True if you want historical runs to be executed upon DAG creation
+    params={"key_require_to_pass":"value"}
+) as dag:
+
+    start = DummyOperator(
+        task_id="START"
+    )
+
+    end = DummyOperator(
+        task_id = "END"
+    )
+
+    task_trigger_glue_job = PythonOperator(
+        task_id = "trigger_aws_glue_job",
+        python_callable = trigger_glue_job
+    )
+
+    grab_glue_job_id = PythonOperator(
+        task_id = "grab_glue_job_id",
+        python_callable = grab_glue_job_id
+    )
+
+    wait_for_job = PythonOperator(
+        task_id = "check_glue_job_status",
+        python_callable = check_status_glue_job
+    )
+
+    
+    start >> task_trigger_glue_job >> grab_glue_job_id >> wait_for_job >> end
+
 
